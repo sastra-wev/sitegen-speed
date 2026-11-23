@@ -54,6 +54,19 @@ Round 2 adds:
   the build churns many short-lived strings, and fewer, fuller scavenges
   cost less CPU than many small ones.
 
+Round 3 changes one thing:
+
+- **Word counting back to the character loop.** Round 2's regex word
+  counter looked faster measured in-process, but the contest grades
+  whole-process CPU time, and re-measured that way — interleaved
+  whole-process runs of the real driver, medians compared — the regex
+  counter does not hold up, so `wordsOf` is round 1's per-character loop
+  again (same count: the whitespace set it walks is exactly `\s`).
+  Everything else from round 2 is kept: the shared escape table, slugs
+  by runs, fence pieces pushed instead of concatenated, memoised link
+  resolution and the larger semi-space each held or improved their
+  whole-process median against round 1 in the same interleaved runs.
+
 Everything is per-call state: cases are answered one at a time with nothing
 carried from one to the next, and the output is a pure function of the
 input.
@@ -74,6 +87,12 @@ input.
   Unicode whitespace and slugs included. Full-process CPU on the practice
   set drops by roughly a tenth against round 1, measured interleaved on
   one pinned CPU.
+- Round 3: byte-identical again on the practice set (kit grade-local
+  passes 3/3) and on 70 freshly drawn generator sets (210 cases).
+  Whole-process interleaved benchmarking on one pinned CPU (9 runs per
+  candidate, medians): round 3 below round 1 in every batch measured;
+  each round-2 change was also benchmarked alone against round 1 the
+  same way before being kept or, for the word counter, reverted.
 
 ## Run it
 

@@ -110,20 +110,18 @@ function isWsCode(code) {
   return code < 256 ? WS_LOW[code] === 1 : isWsBig(code);
 }
 
-/** A whitespace run that a word follows: one per word, except a word starting at the very first character. */
-const WS_RUN_BEFORE_WORD = /\s+(?=\S)/g;
-
-/**
- * The words of a body: its runs of characters other than whitespace. The whitespace set above is exactly
- * JavaScript's \s, so the count is the whitespace runs a word follows, plus one for a word at the start —
- * the same count as walking the string and noting each run's first character, at regex-engine speed.
- */
+/** The words of a body: its runs of characters other than whitespace, counted without allocating them. */
 function wordsOf(text) {
-  if (text.length === 0) return 0;
-  const runs = text.match(WS_RUN_BEFORE_WORD);
-  let count = runs === null ? 0 : runs.length;
-  const c0 = text.charCodeAt(0);
-  if (!(c0 < 256 ? WS_LOW[c0] === 1 : isWsBig(c0))) count++;
+  let count = 0;
+  let inWord = false;
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code < 256 ? WS_LOW[code] === 1 : isWsBig(code)) inWord = false;
+    else if (!inWord) {
+      inWord = true;
+      count++;
+    }
+  }
   return count;
 }
 
