@@ -7,9 +7,10 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setFlagsFromString } from 'node:v8';
 
-// V8's incremental marking off, set before solve.js is imported so all of its work runs under it (the rules allow an
-// entry to tune V8's flags the same way the house baseline does).
-setFlagsFromString('--no-incremental-marking');
+// V8's incremental marking off and a larger semi-space (the build churns many short-lived strings; fewer, fuller
+// scavenges cost less CPU than many small ones), set before solve.js is imported so all of its work runs under them
+// (the rules allow an entry to tune V8's flags the same way the house baseline does).
+setFlagsFromString('--no-incremental-marking --max-semi-space-size=16');
 
 /** solve.js, imported by its URL (a .js module carries no types) and typed by its contract. */
 const { run } = (await import(new URL('./solve.js', import.meta.url).href)) as { run: (input: unknown) => unknown };

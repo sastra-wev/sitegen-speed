@@ -35,6 +35,25 @@ Same semantics, cheaper machinery:
   non-whitespace with a table lookup instead of a global regex match — and
   is skipped entirely when no template path names it.
 
+Round 2 adds:
+
+- **One escape table for every escaper.** HTML escaping and the inline
+  parser's plain runs read a single per-code-unit table instead of compare
+  chains, so plain text is classified with one array load per character.
+- **Slugs by runs.** The slug rule is evaluated over maximal runs of
+  keepable characters, lowered as one slice per run, instead of a string
+  concatenation per character.
+- **Word counting in the regex engine.** The whitespace set `wordsOf`
+  recognises is exactly JavaScript's `\s`, so the count is the whitespace
+  runs a word follows, plus a word at the start — the same count, scanned
+  by the regex engine rather than a per-character loop.
+- **Memoised link resolution.** A (directory, target) pair resolves the
+  same way from every source in that directory, so each distinct pair is
+  resolved once per build; broken links are still reported per source.
+- **A larger semi-space.** The driver raises V8's semi-space to 16 MB:
+  the build churns many short-lived strings, and fewer, fuller scavenges
+  cost less CPU than many small ones.
+
 Everything is per-call state: cases are answered one at a time with nothing
 carried from one to the next, and the output is a pure function of the
 input.
@@ -48,6 +67,13 @@ input.
 - Deterministic: two executions write byte-identical `answers.json`.
 - Locally (one pinned CPU, same machine, practice set): about **2.6×**
   less CPU time in `run()` than the reference build.
+- Round 2: byte-identical again on the practice set (kit grade-local
+  passes 3/3), on 70 freshly drawn generator sets (210 cases) and on the
+  edge cases; the rewritten word counter and slug rule each agree with
+  the round-1 implementations on tens of thousands of random strings,
+  Unicode whitespace and slugs included. Full-process CPU on the practice
+  set drops by roughly a tenth against round 1, measured interleaved on
+  one pinned CPU.
 
 ## Run it
 
