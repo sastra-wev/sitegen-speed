@@ -8,22 +8,19 @@ const byCodeUnits = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
 // ---------------------------------------------------------------- text
 
-/** The HTML replacement for each escapable code unit (below 256), null elsewhere: one table for every escaper. */
-const ESC_REP = new Array(256).fill(null);
-ESC_REP[38] = '&amp;';
-ESC_REP[60] = '&lt;';
-ESC_REP[62] = '&gt;';
-ESC_REP[34] = '&quot;';
-ESC_REP[39] = '&#39;';
-
 /** `text` with & < > " and ' escaped, and nothing else; the same string back when there is nothing to escape. */
 function escapeHtml(s) {
   let out = null;
   let last = 0;
   for (let i = 0; i < s.length; i++) {
-    const code = s.charCodeAt(i);
-    const rep = code < 256 ? ESC_REP[code] : null;
-    if (rep === null) continue;
+    const c = s[i];
+    let rep = null;
+    if (c === '&') rep = '&amp;';
+    else if (c === '<') rep = '&lt;';
+    else if (c === '>') rep = '&gt;';
+    else if (c === '"') rep = '&quot;';
+    else if (c === "'") rep = '&#39;';
+    else continue;
     out = (out === null ? s.slice(0, i) : out + s.slice(last, i)) + rep;
     last = i + 1;
   }
@@ -43,29 +40,19 @@ function slugifyUncached(text) {
     }
   }
   if (!ascii) plain = text.normalize('NFKD').replace(/\p{M}/gu, '');
-  // Maximal runs of [A-Za-z0-9], lowered as one slice each and joined by single dashes: the same slug as the
-  // character-at-a-time rule (a run boundary is exactly where that rule's gap flag would fire).
   let out = '';
-  let started = false;
-  let i = 0;
-  const n = plain.length;
-  while (i < n) {
-    while (i < n) {
-      const c = plain.charCodeAt(i);
-      if ((c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57)) break;
-      i++;
+  let gap = false;
+  for (const ch of plain) {
+    let keep = null;
+    if (ch >= 'A' && ch <= 'Z') keep = ch.toLowerCase();
+    else if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')) keep = ch;
+    if (keep === null) {
+      gap = out.length > 0;
+      continue;
     }
-    if (i >= n) break;
-    let j = i + 1;
-    while (j < n) {
-      const c = plain.charCodeAt(j);
-      if ((c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57)) j++;
-      else break;
-    }
-    if (started) out += '-';
-    out += plain.slice(i, j).toLowerCase();
-    started = true;
-    i = j;
+    if (gap) out += '-';
+    gap = false;
+    out += keep;
   }
   out = out.slice(0, SLUG_MAX).replace(/-+$/, '');
   return out === '' ? 'untitled' : out;
@@ -276,11 +263,6 @@ function findSingleStar(s, from, end) {
   return -1;
 }
 
-/** Inline plain-run classes, by code unit below 256: 1 breaks the run (\\ ` * [), 2 escapes in place, 0 is plain. */
-const INLINE_CLS = new Uint8Array(256);
-for (const ch of ['\\', '`', '*', '[']) INLINE_CLS[ch.charCodeAt(0)] = 1;
-for (let code = 0; code < 256; code++) if (ESC_REP[code] !== null) INLINE_CLS[code] = 2;
-
 /**
  * `s[a..b]` rendered inline into `out` (an array of chunks); `env.link(target)` is a link's href. Mirrors
  * makefun-site's inline() exactly, over ranges of the original string instead of slices.
@@ -362,17 +344,26 @@ function inlineRange(s, a, b, env, out) {
     // A plain run: everything up to the next \\ ` * or [, with the five HTML escapes applied on the way.
     let seg = i;
     while (i < b) {
-      const code = s.charCodeAt(i);
-      const cls = code < 256 ? INLINE_CLS[code] : 0;
-      if (cls === 0) {
+      const ch = s.charCodeAt(i);
+      if ((ch >= 97 && ch <= 122) || (ch >= 65 && ch <= 90) || ch === 32) {
         i++;
         continue;
       }
-      if (cls === 1) break;
-      if (seg < i) out.push(s.slice(seg, i));
-      out.push(ESC_REP[code]);
+      if (ch === 92 || ch === 96 || ch === 42 || ch === 91) break;
+      let rep = null;
+      if (ch === 38) rep = '&amp;';
+      else if (ch === 60) rep = '&lt;';
+      else if (ch === 62) rep = '&gt;';
+      else if (ch === 34) rep = '&quot;';
+      else if (ch === 39) rep = '&#39;';
+      if (rep !== null) {
+        if (seg < i) out.push(s.slice(seg, i));
+        out.push(rep);
+        i++;
+        seg = i;
+        continue;
+      }
       i++;
-      seg = i;
     }
     if (seg < i) out.push(s.slice(seg, i));
   }
@@ -576,9 +567,9 @@ function renderMarkdown(src, env, slugify) {
       }
       i++;
       const cls = fence === '' ? '' : ` class="language-${escapeHtml(fence)}"`;
-      out.push(`<pre><code${cls}>`);
-      for (const l of body) out.push(escapeHtml(l), '\n');
-      out.push('</code></pre>\n');
+      let chunk = `<pre><code${cls}>`;
+      for (const l of body) chunk += `${escapeHtml(l)}\n`;
+      out.push(`${chunk}</code></pre>\n`);
       continue;
     }
     const heading = slow ? headingOfRe(line) : headingOf(line);
@@ -996,49 +987,33 @@ export function run(input) {
     bySource.set(s.path, s);
   }
 
-  // Markdown, each body's links resolved to the pages and static files they name. A (directory, target)
-  // pair resolves the same way from every source in that directory, so resolutions are memoised per build;
-  // a broken resolution is cached as null and still reported once per linking source.
+  // Markdown, each body's links resolved to the pages and static files they name.
   const staticPaths = new Set(statics.map((f) => f.path));
   const broken = new Set();
-  const linkCache = new Map();
-  const resolveLink = (dir, target) => {
-    const key = `${dir}\n${target}`;
-    let href = linkCache.get(key);
-    if (href !== undefined) return href;
-    href = target;
-    const c0 = target.charCodeAt(0);
-    if (c0 !== 47 && c0 !== 35) {
-      // / and # keep the target; so does one opening on a scheme.
-      let scheme = false;
-      if (SCHEME_FIRST.test(target[0])) {
-        let j = 1;
-        while (j < target.length && SCHEME_REST.test(target[j])) j++;
-        scheme = target[j] === ':';
-      }
-      if (!scheme) {
-        const hash = target.indexOf('#');
-        const rel = hash === -1 ? target : target.slice(0, hash);
-        const frag = hash === -1 ? '' : target.slice(hash);
-        const path = rel === '' ? null : resolvePath(dir, rel);
-        if (path !== null && bySource.has(path)) href = `${bySource.get(path).url}${frag}`;
-        else if (path !== null && staticPaths.has(path)) href = `${base}/${path}${frag}`;
-        else href = null;
-      }
-    }
-    linkCache.set(key, href);
-    return href;
-  };
   for (const s of kept) {
     const dir = dirOf(s.path);
     const env = {
       link: (target) => {
-        const href = resolveLink(dir, target);
-        if (href === null) {
-          broken.add(`broken-link ${s.path} -> ${target}`);
-          return target;
+        const c0 = target.charCodeAt(0);
+        if (c0 !== 47 && c0 !== 35) {
+          // / and # keep the target; so does one opening on a scheme.
+          let scheme = false;
+          if (SCHEME_FIRST.test(target[0])) {
+            let j = 1;
+            while (j < target.length && SCHEME_REST.test(target[j])) j++;
+            scheme = target[j] === ':';
+          }
+          if (!scheme) {
+            const hash = target.indexOf('#');
+            const rel = hash === -1 ? target : target.slice(0, hash);
+            const frag = hash === -1 ? '' : target.slice(hash);
+            const path = rel === '' ? null : resolvePath(dir, rel);
+            if (path !== null && bySource.has(path)) return `${bySource.get(path).url}${frag}`;
+            if (path !== null && staticPaths.has(path)) return `${base}/${path}${frag}`;
+            broken.add(`broken-link ${s.path} -> ${target}`);
+          }
         }
-        return href;
+        return target;
       },
     };
     const md = renderMarkdown(s.body, env, slugify);
